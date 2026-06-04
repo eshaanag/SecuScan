@@ -1,10 +1,41 @@
-import pytest
+import ipaddress
 import socket
+
+import pytest
 from backend.secuscan.validation import (
     validate_target, validate_port, validate_port_range, validate_url,
-    sanitize_input, is_safe_path, match_pattern
+    sanitize_input, is_safe_path, match_pattern, _net_within_allowed_networks
 )
+from backend.secuscan.config import settings
 from backend.secuscan.routes import is_filesystem_target
+
+
+@pytest.mark.parametrize(
+    ("target", "allowed_networks", "expected"),
+    [
+        ("127.0.0.1", ["fc00::/7"], False),
+        ("fd00::1", ["10.0.0.0/8"], False),
+        ("127.0.0.1", ["fc00::/7", "127.0.0.0/8"], True),
+        ("fd00::1", ["10.0.0.0/8", "fc00::/7"], True),
+    ],
+)
+def test_allowed_networks_single_ip_skips_mixed_ip_versions(
+    monkeypatch, target, allowed_networks, expected
+):
+    monkeypatch.setattr(settings, "allowed_networks", allowed_networks)
+
+    net = ipaddress.ip_network(target, strict=False)
+    assert _net_within_allowed_networks(net) is expected
+
+
+def test_validate_target_mixed_version_allowed_networks_returns_validation_error(monkeypatch):
+    monkeypatch.setattr(settings, "allowed_networks", ["fc00::/7"])
+
+    assert validate_target("127.0.0.1", safe_mode=True) == (
+        False,
+        "Target not within allowed networks in safe mode (SecuScan Guardrail)",
+    )
+
 
 def test_validate_target():
     # Valid IP target
